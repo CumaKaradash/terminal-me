@@ -34,14 +34,16 @@ export interface DigitalSignature {
   verified: boolean
 }
 
-declare global {
-  interface Window {
-    crypto: Crypto
+// Safe crypto API access
+const getCryptoAPI = () => {
+  if (typeof window !== "undefined" && window.crypto) {
+    return window.crypto
   }
+  if (typeof globalThis !== "undefined" && globalThis.crypto) {
+    return globalThis.crypto
+  }
+  throw new Error("Web Crypto API not available")
 }
-
-// Use globalThis.crypto for better compatibility
-const cryptoAPI = globalThis.crypto || window.crypto
 
 export class CryptoEngine {
   private static instance: CryptoEngine
@@ -57,6 +59,7 @@ export class CryptoEngine {
 
   // Advanced Hash Functions
   async hash(data: string, algorithm = "SHA-256", salt?: string): Promise<HashResult> {
+    const crypto = getCryptoAPI()
     const encoder = new TextEncoder()
     const inputData = salt ? data + salt : data
     const dataBuffer = encoder.encode(inputData)
@@ -67,10 +70,10 @@ export class CryptoEngine {
       case "SHA-256":
       case "SHA-384":
       case "SHA-512":
-        hashBuffer = await cryptoAPI.subtle.digest(algorithm, dataBuffer)
+        hashBuffer = await crypto.subtle.digest(algorithm, dataBuffer)
         break
       case "SHA-1":
-        hashBuffer = await cryptoAPI.subtle.digest("SHA-1", dataBuffer)
+        hashBuffer = await crypto.subtle.digest("SHA-1", dataBuffer)
         break
       default:
         // Custom implementations for other algorithms
@@ -97,6 +100,8 @@ export class CryptoEngine {
 
   // BLAKE2 Implementation
   private async customHash(data: ArrayBuffer, algorithm: string): Promise<ArrayBuffer> {
+    const crypto = getCryptoAPI()
+
     if (algorithm.toUpperCase() === "BLAKE2") {
       return this.blake2Hash(new Uint8Array(data))
     }
@@ -106,36 +111,37 @@ export class CryptoEngine {
     }
 
     // Fallback to SHA-256
-    return await cryptoAPI.subtle.digest("SHA-256", data)
+    return await crypto.subtle.digest("SHA-256", data)
   }
 
   // Simplified BLAKE2 implementation
   private async blake2Hash(data: Uint8Array): Promise<ArrayBuffer> {
+    const crypto = getCryptoAPI()
     // This is a simplified version - in production, use a proper BLAKE2 library
-    const key = await cryptoAPI.subtle.importKey("raw", data, { name: "HMAC", hash: "SHA-256" }, false, ["sign"])
+    const key = await crypto.subtle.importKey("raw", data, { name: "HMAC", hash: "SHA-256" }, false, ["sign"])
 
-    const signature = await cryptoAPI.subtle.sign("HMAC", key, data)
+    const signature = await crypto.subtle.sign("HMAC", key, data)
     return signature
   }
 
   // Simplified MD5 implementation (for demonstration - use proper library in production)
   private async md5Hash(data: Uint8Array): Promise<ArrayBuffer> {
+    const crypto = getCryptoAPI()
     // This is a placeholder - implement proper MD5 or use a library
-    return await cryptoAPI.subtle.digest("SHA-256", data)
+    return await crypto.subtle.digest("SHA-256", data)
   }
 
   // AES-256-GCM Encryption
   async encrypt(data: string, password: string): Promise<EncryptionResult> {
+    const crypto = getCryptoAPI()
     const encoder = new TextEncoder()
     const dataBuffer = encoder.encode(data)
 
     // Derive key from password using PBKDF2
-    const salt = cryptoAPI.getRandomValues(new Uint8Array(16))
-    const keyMaterial = await cryptoAPI.subtle.importKey("raw", encoder.encode(password), "PBKDF2", false, [
-      "deriveKey",
-    ])
+    const salt = crypto.getRandomValues(new Uint8Array(16))
+    const keyMaterial = await crypto.subtle.importKey("raw", encoder.encode(password), "PBKDF2", false, ["deriveKey"])
 
-    const key = await cryptoAPI.subtle.deriveKey(
+    const key = await crypto.subtle.deriveKey(
       {
         name: "PBKDF2",
         salt,
@@ -148,8 +154,8 @@ export class CryptoEngine {
       ["encrypt"],
     )
 
-    const iv = cryptoAPI.getRandomValues(new Uint8Array(12))
-    const encrypted = await cryptoAPI.subtle.encrypt({ name: "AES-GCM", iv }, key, dataBuffer)
+    const iv = crypto.getRandomValues(new Uint8Array(12))
+    const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, dataBuffer)
 
     const keyId = this.generateKeyId()
     this.keyStore.set(keyId, key)
@@ -165,17 +171,16 @@ export class CryptoEngine {
 
   // AES-256-GCM Decryption
   async decrypt(encryptedData: EncryptionResult, password: string): Promise<string> {
+    const crypto = getCryptoAPI()
     const encoder = new TextEncoder()
 
     // Recreate the key using the same password and salt
-    const keyMaterial = await cryptoAPI.subtle.importKey("raw", encoder.encode(password), "PBKDF2", false, [
-      "deriveKey",
-    ])
+    const keyMaterial = await crypto.subtle.importKey("raw", encoder.encode(password), "PBKDF2", false, ["deriveKey"])
 
     // Note: In a real implementation, you'd need to store and retrieve the salt
     const salt = new Uint8Array(16) // This should be stored with the encrypted data
 
-    const key = await cryptoAPI.subtle.deriveKey(
+    const key = await crypto.subtle.deriveKey(
       {
         name: "PBKDF2",
         salt,
@@ -199,14 +204,15 @@ export class CryptoEngine {
         .map((c) => c.charCodeAt(0)),
     )
 
-    const decrypted = await cryptoAPI.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext)
+    const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext)
 
     return new TextDecoder().decode(decrypted)
   }
 
   // RSA Key Pair Generation
   async generateRSAKeyPair(keySize = 2048): Promise<KeyPair> {
-    const keyPair = await cryptoAPI.subtle.generateKey(
+    const crypto = getCryptoAPI()
+    const keyPair = await crypto.subtle.generateKey(
       {
         name: "RSA-OAEP",
         modulusLength: keySize,
@@ -217,8 +223,8 @@ export class CryptoEngine {
       ["encrypt", "decrypt"],
     )
 
-    const publicKey = await cryptoAPI.subtle.exportKey("spki", keyPair.publicKey)
-    const privateKey = await cryptoAPI.subtle.exportKey("pkcs8", keyPair.privateKey)
+    const publicKey = await crypto.subtle.exportKey("spki", keyPair.publicKey)
+    const privateKey = await crypto.subtle.exportKey("pkcs8", keyPair.privateKey)
 
     const keyPairData: KeyPair = {
       publicKey: btoa(String.fromCharCode(...new Uint8Array(publicKey))),
@@ -236,6 +242,7 @@ export class CryptoEngine {
 
   // Digital Signature Generation
   async signData(data: string, privateKeyPem: string): Promise<DigitalSignature> {
+    const crypto = getCryptoAPI()
     const encoder = new TextEncoder()
     const dataBuffer = encoder.encode(data)
 
@@ -245,7 +252,7 @@ export class CryptoEngine {
         .split("")
         .map((c) => c.charCodeAt(0)),
     )
-    const privateKey = await cryptoAPI.subtle.importKey(
+    const privateKey = await crypto.subtle.importKey(
       "pkcs8",
       privateKeyBuffer,
       {
@@ -256,7 +263,7 @@ export class CryptoEngine {
       ["sign"],
     )
 
-    const signature = await cryptoAPI.subtle.sign(
+    const signature = await crypto.subtle.sign(
       {
         name: "RSA-PSS",
         saltLength: 32,
@@ -276,16 +283,13 @@ export class CryptoEngine {
 
   // HMAC Generation
   async generateHMAC(data: string, secret: string, algorithm = "SHA-256"): Promise<string> {
+    const crypto = getCryptoAPI()
     const encoder = new TextEncoder()
-    const key = await cryptoAPI.subtle.importKey(
-      "raw",
-      encoder.encode(secret),
-      { name: "HMAC", hash: algorithm },
-      false,
-      ["sign"],
-    )
+    const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: algorithm }, false, [
+      "sign",
+    ])
 
-    const signature = await cryptoAPI.subtle.sign("HMAC", key, encoder.encode(data))
+    const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(data))
     return Array.from(new Uint8Array(signature))
       .map((b) => b.toString(16).padStart(2, "0"))
       .join("")
@@ -509,7 +513,8 @@ export class CryptoEngine {
 
   // Generate cryptographically secure random data
   generateSecureRandom(length: number, format: "hex" | "base64" | "bytes" = "hex"): string {
-    const randomBytes = cryptoAPI.getRandomValues(new Uint8Array(length))
+    const crypto = getCryptoAPI()
+    const randomBytes = crypto.getRandomValues(new Uint8Array(length))
 
     switch (format) {
       case "hex":
